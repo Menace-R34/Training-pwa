@@ -1,10 +1,17 @@
-# Training PWA V2
+# Training PWA V3.1
 
 Offline-Trainings-App.
 
-V2 ergänzt:
-- Anzeige der Werte des letzten Trainings je Übung und Satz
-- automatische Übernahme des letzten Gewichts als Startwert
-- freie Übungsreihenfolge bleibt erhalten
-- 90-Sekunden-Pausentimer nach abgeschlossenem Satz
-- lokaler Verlauf und JSON-Export
+V3.1:
+- permanente Versionsanzeige am unteren Bildschirmrand: „Training PWA · Version 3.1“
+- Versionsnummer zentral im Code hinterlegt
+- neuer Offline-Cache für eindeutige Aktualisierung
+
+Weiterhin enthalten:
+- Kraftübungen: Gewicht + Wiederholungen
+- Körpergewichtsübungen: Wiederholungen
+- Zeitübungen: Sekunden
+- Cardio: Minuten + Distanz
+- „Letztes Training“ mit passenden Einheiten und Startwerten
+- freie Übungsreihenfolge
+- Pausentimer

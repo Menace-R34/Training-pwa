@@ -1,3 +1,4 @@
+const APP_VERSION='3.1';
 const plans={
 Montag:{focus:'Beine · Brust · Trizeps · Core',optional:false,ex:[['Aufwärmen','7–10 Min.','Ergometer / Crosstrainer'],['Beinpresse','3 × 10–12','Hackenschmidt-/Squat-Maschine'],['Beinbeuger','3 × 10–12','sitzend oder liegend'],['Hip Thrust','3 × 10–12','Hip-Thrust-/Glute-Maschine'],['Bankdrücken','3 × 8–12','Brustpresse'],['Schrägbankdrücken','3 × 8–12','schräge Brustpresse'],['Trizepsdrücken','3 × 10–15','Trizeps-/Dip-Maschine'],['Dead Bug','3 × 6–10/Seite','Core-Maschine*'],['Side Plank','2–3 × 20–40 s/Seite','seitliche Rumpfmaschine*']]},
 Dienstag:{focus:'Haltung · Core · Kondition',optional:true,ex:[['Aufwärmen','5–7 Min.','Ergometer / Crosstrainer'],['Bird Dog','3 × 8/Seite','Core-Gerät*'],['Pallof Press','3 × 10/Seite','Kabelzug / Torso-Gerät*'],['Face Pull','3 × 12–15','Reverse-Fly-Maschine'],['Reverse Fly','3 × 12–15','Reverse-Pec-Deck'],['Side Plank','3 × 20–40 s/Seite','seitliche Rumpfmaschine*'],['Glute Bridge','3 × 12–15','Hip-Thrust-/Glute-Maschine'],['Cardio moderat','30–40 Min.','Ergometer / Crosstrainer / Laufband'],['Mobilität','5 Min.','Hüfte / Brust / BWS']]},
@@ -9,6 +10,49 @@ Sonntag:{focus:'Regeneration',optional:true,ex:[]}}
 const days=['Sonntag','Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag'];let state=JSON.parse(localStorage.getItem('trainingState')||'{"sessions":{},"history":[]}');let currentDay=days[new Date().getDay()],guidedIndex=0;
 function key(day=currentDay){let d=new Date(),m=new Date(d);m.setDate(d.getDate()-((d.getDay()+6)%7));return m.toISOString().slice(0,10)+'_'+day}function sess(day=currentDay){let k=key(day);if(!state.sessions[k])state.sessions[k]={day,date:new Date().toISOString(),items:plans[day].ex.map(x=>({name:x[0],target:x[1],alt:x[2],status:'open',sets:[{},{},{}],effort:'',pain:'',note:''}))};return state.sessions[k]}function save(){localStorage.setItem('trainingState',JSON.stringify(state))}
 function parseDate(v){return new Date(v)}
+
+function exerciseType(x){
+  const n=(x.name||'').toLowerCase(), t=(x.target||'').toLowerCase();
+  const all=n+' '+t;
+  // Time-dominant bodyweight/static exercises
+  if(/plank|unterarmstütz|wall sit|wandsitz|dead hang|hängen/.test(all)) return 'time';
+  // Cardio / distance-oriented exercises
+  if(/ergometer|crosstrainer|laufband|jog|laufen|rad|fahrrad|rudern|rowing/.test(all)) return 'cardio';
+  // Bodyweight repetition exercises
+  if(/liegestütz|push.?up|bird dog|crunch|sit.?up|mountain climber|ausfallschritt ohne|kniebeuge ohne/.test(all)) return 'bodyweight';
+  // Explicit time targets override generic strength
+  if(/\b\d+\s*[–-]\s*\d+\s*s\b|\b\d+\s*s\/seite\b|\bsek/.test(t)) return 'time';
+  return 'strength';
+}
+function fieldConfig(x){
+  const type=exerciseType(x);
+  if(type==='time') return [{key:'seconds',label:'Sek.',step:'1',mode:'numeric'}];
+  if(type==='cardio') return [
+    {key:'minutes',label:'Min.',step:'0.1',mode:'decimal'},
+    {key:'distance',label:'km',step:'0.01',mode:'decimal'}
+  ];
+  if(type==='bodyweight') return [{key:'reps',label:'Wdh.',step:'1',mode:'numeric'}];
+  return [
+    {key:'kg',label:'kg',step:'0.5',mode:'decimal'},
+    {key:'reps',label:'Wdh.',step:'1',mode:'numeric'}
+  ];
+}
+function valueExists(v){return v!==undefined&&v!==null&&v!==''}
+function previousSetText(x,z){
+  const type=exerciseType(x), parts=[];
+  if(type==='time' && valueExists(z.seconds)) parts.push(`${z.seconds} s`);
+  else if(type==='cardio'){
+    if(valueExists(z.minutes)) parts.push(`${z.minutes} min`);
+    if(valueExists(z.distance)) parts.push(`${z.distance} km`);
+  } else if(type==='bodyweight'){
+    if(valueExists(z.reps)) parts.push(`${z.reps} Wdh.`);
+  } else {
+    if(valueExists(z.kg)) parts.push(`${z.kg} kg`);
+    if(valueExists(z.reps)) parts.push(`${z.reps} Wdh.`);
+  }
+  return parts.join(' · ');
+}
+
 function previousExercise(name,currentSession){
   const candidates=[];
   (state.history||[]).forEach(s=>{
@@ -19,7 +63,7 @@ function previousExercise(name,currentSession){
   Object.values(state.sessions||{}).forEach(s=>{
     if(s===currentSession)return;
     const x=(s.items||[]).find(i=>i.name===name);
-    const hasData=x&&(x.sets||[]).some(z=>z.kg!==undefined&&z.kg!==''||z.reps!==undefined&&z.reps!=='');
+    const hasData=x&&(x.sets||[]).some(z=>Object.values(z||{}).some(valueExists));
     if(hasData)candidates.push({date:parseDate(s.date),x});
   });
   candidates.sort((a,b)=>b.date-a.date);
@@ -28,12 +72,16 @@ function previousExercise(name,currentSession){
 function ensurePreviousValues(x,s){
   if(x.previousLoaded)return;
   const prev=previousExercise(x.name,s);
+  const fields=fieldConfig(x);
   x.previousLoaded=true;
-  x.previous=prev?{sets:(prev.sets||[]).map(z=>({kg:z.kg??'',reps:z.reps??''}))}:null;
+  x.previous=prev?{sets:(prev.sets||[]).map(z=>({...z}))}:null;
   if(prev){
     x.sets.forEach((v,j)=>{
       const p=prev.sets?.[j];
-      if(p&&v.kg===undefined&&p.kg!==undefined&&p.kg!=='')v.kg=p.kg;
+      if(!p)return;
+      fields.forEach(f=>{
+        if(!valueExists(v[f.key]) && valueExists(p[f.key])) v[f.key]=p[f.key];
+      });
     });
   }
   save();
@@ -55,32 +103,38 @@ function renderToday(){let p=plans[currentDay],s=sess();dayLabel.textContent=cur
 function openGuided(i){guidedIndex=i;guided.classList.remove('hidden');renderGuided()}
 function renderGuided(){
   let s=sess(),x=s.items[guidedIndex];ensurePreviousValues(x,s);
+  const type=exerciseType(x), fields=fieldConfig(x);
   progress.textContent=`${guidedIndex+1}/${s.items.length}`;
   gStatus.textContent=x.status.toUpperCase();gName.textContent=x.name;gTarget.textContent=x.target;gAlt.textContent='Alternative: '+x.alt;
+
   const prev=x.previous;
-  if(prev&&prev.sets?.some(z=>z.kg!==''||z.reps!=='')){
+  if(prev&&prev.sets?.some(z=>previousSetText(x,z))){
     const rows=prev.sets.map((z,j)=>{
-      const parts=[];
-      if(z.kg!==''&&z.kg!==undefined)parts.push(`${z.kg} kg`);
-      if(z.reps!==''&&z.reps!==undefined)parts.push(`${z.reps} Wdh.`);
-      return parts.length?`S${j+1}: ${parts.join(' · ')}`:'';
+      const txt=previousSetText(x,z);
+      return txt?`S${j+1}: ${txt}`:'';
     }).filter(Boolean);
-    lastTraining.innerHTML=`<strong>Letztes Training</strong><div>${rows.join(' &nbsp;|&nbsp; ')}</div><small>Gewichte wurden als Startwert für heute übernommen.</small>`;
-    lastTraining.classList.remove('hidden');
+    const startInfo = type==='strength' ? 'Gewichte wurden als Startwert für heute übernommen.'
+      : type==='time' ? 'Zeiten wurden als Startwert für heute übernommen.'
+      : type==='cardio' ? 'Zeit und Distanz wurden als Startwert übernommen.'
+      : 'Wiederholungen wurden als Startwert übernommen.';
+    lastTraining.innerHTML=`<strong>Letztes Training</strong><div>${rows.join(' &nbsp;|&nbsp; ')}</div><small>${startInfo}</small>`;
   }else{
     lastTraining.innerHTML='<strong>Letztes Training</strong><div>Noch keine Vergleichswerte vorhanden.</div>';
-    lastTraining.classList.remove('hidden');
   }
+  lastTraining.classList.remove('hidden');
+
   sets.innerHTML='';
   x.sets.forEach((v,j)=>{
-    let r=document.createElement('div');r.className='setRow';
-    r.innerHTML=`<strong>S${j+1}</strong><label>kg<input type="number" step="0.5" inputmode="decimal" value="${v.kg??''}"></label><label>Wdh.<input type="number" inputmode="numeric" value="${v.reps??''}"></label><button class="setCheck">${v.done?'✓':'○'}</button>`;
-    let ins=r.querySelectorAll('input');
-    ins[0].oninput=e=>{v.kg=e.target.value;save()};
-    ins[1].oninput=e=>{v.reps=e.target.value;save()};
+    let r=document.createElement('div');r.className='setRow dynamic';
+    const inputs=fields.map(f=>`<label>${f.label}<input data-key="${f.key}" type="number" step="${f.step}" inputmode="${f.mode}" value="${v[f.key]??''}"></label>`).join('');
+    r.innerHTML=`<strong>S${j+1}</strong>${inputs}<button class="setCheck">${v.done?'✓':'○'}</button>`;
+    r.querySelectorAll('input').forEach(inp=>{
+      inp.oninput=e=>{v[e.target.dataset.key]=e.target.value;save()};
+    });
     r.querySelector('button').onclick=()=>{v.done=!v.done;save();if(v.done)startRestTimer(90);renderGuided()};
     sets.appendChild(r)
   });
+
   effort.value=x.effort;pain.value=x.pain;note.value=x.note;
   effort.onchange=e=>{x.effort=e.target.value;save()};
   pain.oninput=e=>{x.pain=e.target.value;save()};
@@ -90,5 +144,7 @@ skipTimer.onclick=stopRestTimer;
 occupied.onclick=()=>{let x=sess().items[guidedIndex];x.status='occupied';save();let open=sess().items.findIndex((y,i)=>i!==guidedIndex&&y.status==='open');if(open>=0){guidedIndex=open;renderGuided()}else{guided.classList.add('hidden');renderToday()}};done.onclick=()=>{let s=sess(),x=s.items[guidedIndex];x.status='done';save();let open=s.items.findIndex(y=>y.status==='open');if(open>=0){guidedIndex=open;renderGuided()}else{guided.classList.add('hidden');finishSession();renderToday()}};chooseExercise.onclick=()=>{guided.classList.add('hidden');renderToday()};closeGuided.onclick=()=>{guided.classList.add('hidden');renderToday()};startGuided.onclick=()=>{let s=sess(),i=s.items.findIndex(x=>x.status==='open');openGuided(i<0?0:i)};
 function finishSession(){let s=sess();if(s.items.length&&s.items.every(x=>x.status==='done')&&!s.archived){s.archived=true;state.history.unshift(JSON.parse(JSON.stringify(s)));save();renderHistory()}}
 function renderWeek(){weekList.innerHTML='';['Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag','Sonntag'].forEach(d=>{let p=plans[d],s=sess(d),done=s.items.filter(x=>x.status==='done').length;let e=document.createElement('div');e.className='weekDay';e.innerHTML=`<strong>${d}${p.optional?' · optional':''}</strong><div class="muted">${p.focus}</div><div>${p.ex.length?done+'/'+p.ex.length:'Regeneration'}</div>`;weekList.appendChild(e)})}function renderHistory(){historyList.innerHTML=state.history.length?'':'Noch keine abgeschlossene Einheit.';state.history.forEach(s=>{let e=document.createElement('div');e.className='historyItem';e.innerHTML=`<strong>${s.day}</strong><div class="muted">${new Date(s.date).toLocaleDateString('de-DE')} · ${s.items.length} Übungen</div>`;historyList.appendChild(e)})}
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button,.view').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.getElementById(b.dataset.view).classList.add('active');if(b.dataset.view==='week')renderWeek();if(b.dataset.view==='history')renderHistory()});exportBtn.onclick=()=>{let blob=new Blob([JSON.stringify({version:2,exportedAt:new Date().toISOString(),plans,state},null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='training-export-'+new Date().toISOString().slice(0,10)+'.json';a.click();URL.revokeObjectURL(a.href)};importFile.onchange=async e=>{let obj=JSON.parse(await e.target.files[0].text());if(obj.state){state=obj.state;save();renderToday();alert('Daten importiert.')}};resetBtn.onclick=()=>{if(confirm('Alle lokalen Trainingsdaten wirklich löschen?')){localStorage.removeItem('trainingState');location.reload()}};
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button,.view').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.getElementById(b.dataset.view).classList.add('active');if(b.dataset.view==='week')renderWeek();if(b.dataset.view==='history')renderHistory()});exportBtn.onclick=()=>{let blob=new Blob([JSON.stringify({version:APP_VERSION,exportedAt:new Date().toISOString(),plans,state},null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='training-export-'+new Date().toISOString().slice(0,10)+'.json';a.click();URL.revokeObjectURL(a.href)};importFile.onchange=async e=>{let obj=JSON.parse(await e.target.files[0].text());if(obj.state){state=obj.state;save();renderToday();alert('Daten importiert.')}};resetBtn.onclick=()=>{if(confirm('Alle lokalen Trainingsdaten wirklich löschen?')){localStorage.removeItem('trainingState');location.reload()}};
 let deferredPrompt;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installBtn.hidden=false});installBtn.onclick=async()=>{if(deferredPrompt){deferredPrompt.prompt();await deferredPrompt.userChoice;installBtn.hidden=true}};if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js');renderToday();renderHistory();
+
+const versionBadge=document.getElementById('versionBadge');if(versionBadge)versionBadge.textContent=`Training PWA · Version ${APP_VERSION}`;
